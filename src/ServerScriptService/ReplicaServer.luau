@@ -1,5 +1,5 @@
 --[[
-MAD STUDIO
+MAD STUDIO (by loleris)
 
 -[Replica]---------------------------------------
 	
@@ -67,7 +67,7 @@ MAD STUDIO
 		Replica:BindToInstance(instance: Instance) -- Players who observe the instance stream in
 			-- will be subscribed to this component; Observing the instance stream out
 			-- will destroy the component for the observing player; Replicas should be bound
-			-- to instances first and then ":Replicate()" or ":Subscribe()" should be called
+			-- to instances first and then ":Replicate()" or ":Subscribe()" should be calleda
 			-- after. A replica can only be bound once.
 			
 		Replica:Replicate() -- Subscribes all existing and future players; ":Subscribe()" and ":Unsubscribe()" will become locked
@@ -86,6 +86,7 @@ MAD STUDIO
 ----- Dependencies -----
 
 local ReplicaShared = game.ReplicatedStorage.ReplicaShared
+local Sera = require(game.ReplicatedStorage.Sera
 local RateLimit = require(ReplicaShared.RateLimit)
 local Remote = require(ReplicaShared.Remote)
 local Signal = require(ReplicaShared.Signal)
@@ -125,6 +126,7 @@ local RemoteCreate = Remote.New("ReplicaCreate")           -- (creation, root_id
 local RemoteBind = Remote.New("ReplicaBind")               -- (replica_id)
 local RemoteDestroy = Remote.New("ReplicaDestroy")         -- (replica_id)
 local RemoteSignalUnreliable = Remote.New("ReplicaSignalUnreliable", true)   -- (replica_id, ...)
+local RemoteWriteSchema = Remote.New("ReplicaWriteSchema")
 
 local Index = 0
 
@@ -145,52 +147,51 @@ local function IterateGroup(replica, fn) -- fn(replica)
 end
 
 local function LoadWriteLib(module: ModuleScript)
-	
 	local write_lib = WriteLibCache[module]
-	
-	if write_lib ~= nil then
-		return write_lib -- WriteLib module was previously loaded
-	end
-	
-	if typeof(module) ~= "Instance" or module:IsA("ModuleScript") ~= true then
-		error(`[{script.Name}]: "WriteLib" is not a ModuleScript`)
-	elseif module:IsDescendantOf(ReplicatedStorage) == false then
-		error(`[{script.Name}]: "WriteLib" module must be a descendant of ReplicatedStorage`)
-	end
+	if write_lib ~= nil then return write_lib end
 
 	local loaded_module = require(module)
-	
 	if type(loaded_module) ~= "table" then
 		error(`[{script.Name}]: A "WriteLib" ModuleScript must return a table`)
 	end
 
-	local function_list = {} -- fn_id = {fn_name, fn}
-	
+	local function_list = {}
+
 	for key, value in pairs(loaded_module) do
 		if type(key) ~= "string" then
 			error(`[{script.Name}]: "WriteLib" table keys must be strings`)
-		elseif type(value) ~= "function" then
-			error(`[{script.Name}]: "WriteLib" table values must be functions`)
 		end
-		table.insert(function_list, {key, value})
+
+		local fn, schema
+
+		if type(value) == "function" then
+			-- old format, still works
+			fn = value
+			schema = nil
+		elseif type(value) == "table" and type(value.Fn) == "function" then
+			-- new {Fn, Schema} format
+			fn = value.Fn
+			schema = value.Schema
+		else
+			error("[" .. script.Name .. "]: \"" .. key .. "\" must be a function or {{Fn, Schema}} table")
+		end
+
+		table.insert(function_list, {key, fn, schema})
 	end
 
-	table.sort(function_list, function(item1, item2)
-		return item1[1] < item2[1] -- Sort functions by their names - this creates a consistent indexing on server and client-side
+	table.sort(function_list, function(a, b)
+		return a[1] < b[1]
 	end)
 
-	write_lib = {} -- {["fn_name" | fn_id] = {Id = fn_id, fn = fn}, ...}
-
+	write_lib = {}
 	for fn_id, fn_entry in ipairs(function_list) do
-		local entry_table = {Id = fn_id, fn = fn_entry[2]}
-		write_lib[fn_entry[1]] = entry_table
-		write_lib[fn_id] = entry_table
+		local entry = {Id = fn_id, fn = fn_entry[2], schema = fn_entry[3]}
+		write_lib[fn_entry[1]] = entry
+		write_lib[fn_id] = entry
 	end
 
 	WriteLibCache[module] = write_lib
-
 	return write_lib
-	
 end
 
 function GenerateCreation(replica)
@@ -463,31 +464,48 @@ function Replica:TableRemove(path: {string}, index: number): any
 end
 
 function Replica:Write(function_name: string, ...): ...any
-	
 	local write_lib_entry = self.write_lib[function_name]
-	
-	if WriteFlag == true then -- Chained :Write()
-		return write_lib_entry.fn(self, ...)
-	end
-	
-	-- Apply local change:
-	
+
 	WriteFlag = true
 	local return_params = table.pack(pcall(write_lib_entry.fn, self, ...))
 	WriteFlag = false
-	
+
 	if return_params[1] ~= true then
 		error(`[{script.Name}]: (WriteLib) ` .. tostring(return_params[2]))
 	end
-	
 	table.remove(return_params, 1)
-	
-	-- Replicate change:
-	
+
+	if self.replication == nil then
+		return table.unpack(return_params)
+	end
+
 	local self_id = self.Id
 	local fn_id = write_lib_entry.Id
-	
-	if self.replication ~= nil then
+	local schema = write_lib_entry.schema
+
+	if schema ~= nil then
+		local args_table = select(1, ...)
+		local args_buf, err = Sera.Serialize(schema, args_table)
+		if err then
+			error(`[{script.Name}]: Sera serialize error in "{function_name}": {err}`)
+		end
+
+		local args_size = buffer.len(args_buf :: buffer)
+		local payload = buffer.create(5 + args_size)
+		buffer.writeu32(payload, 0, self_id)
+		buffer.writeu8(payload, 4, fn_id)
+		buffer.copy(payload, 5, args_buf :: buffer)
+
+		if self.replication[REPLICATION_ALL] == true then
+			for player in pairs(ReadyPlayers) do
+				RemoteWriteSchema:FireClient(player, payload)
+			end
+		else
+			for player in pairs(self.replication) do
+				RemoteWriteSchema:FireClient(player, payload)
+			end
+		end
+	else
 		if self.replication[REPLICATION_ALL] == true then
 			for player in pairs(ReadyPlayers) do
 				RemoteWrite:FireClient(player, self_id, fn_id, ...)
@@ -498,9 +516,8 @@ function Replica:Write(function_name: string, ...): ...any
 			end
 		end
 	end
-	
+
 	return table.unpack(return_params)
-	
 end
 
 function Replica:FireClient(player, ...)
