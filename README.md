@@ -16,7 +16,7 @@ end
 ```lua
 replica:Write("AddMoney", amount)
 ```
-## new implementatiion:
+## new implementation:
 supports fn and schema pairs
 
 ```lua
@@ -38,3 +38,5 @@ replica:Write("AddMoney", { Amount = amount })
 ```
 
 ### note: both implementations can be used!!!
+
+# how it works:
