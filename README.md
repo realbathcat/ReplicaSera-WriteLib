@@ -38,5 +38,3 @@ replica:Write("AddMoney", { Amount = amount })
 ```
 
 ### note: both implementations can be used!!!
-
-# how it works:
