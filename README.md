@@ -16,7 +16,6 @@ end
 ```lua
 replica:Write("AddMoney", amount)
 ```
-### note: both implementations can be used in the same writelib!!!
 ## new implementatiion:
 
 ```lua
@@ -37,4 +36,4 @@ WriteLib.AddMoney = {
 replica:Write("AddMoney", { Amount = amount })
 ```
 
-# todo: add more stuff idk
+### note: both implementations can be used in the same writelib!!!
