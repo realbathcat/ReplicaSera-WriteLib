@@ -1,6 +1,6 @@
 # ReplicaSera Compatibility
 
-this fork adds compatibility with sera and replica specifically for your writelib module.
+this fork adds compatibility with sera and replica specifically for your writelib
 
 ## original implementation:
 
@@ -16,6 +16,7 @@ end
 ```lua
 replica:Write("AddMoney", amount)
 ```
+### note: both implementations can be used in the same writelib!!!
 ## new implementatiion:
 
 ```lua
